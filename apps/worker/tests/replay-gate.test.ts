@@ -4,12 +4,16 @@ import protoPkg from "@temporalio/proto";
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { DeterminismViolationError } from "@temporalio/workflow";
 
 const temporal = (protoPkg as unknown as { temporal?: typeof protoPkg }).temporal ?? protoPkg;
 
 const MAIN = path.join(__dirname, "..", "dist", "workflows.js");
 const MUTATION_BUNDLE = path.join(__dirname, "..", "dist", "memory-mutation-workflows.js");
 const FIXTURE = path.join(__dirname, "fixtures", "workflow-histories", "dot-goal.json");
+// Test-only bundle that exports dotGoalWorkflow with a divergent command sequence. Used as the
+// negative control: the gate must reject it, otherwise a determinism break would pass silently.
+const NEGATIVE_BUNDLE = path.join(__dirname, "fixtures", "replay-negative-workflows.js");
 const QUEUE = "replay-gate";
 
 let env: TestWorkflowEnvironment;
@@ -72,6 +76,16 @@ describe("replay gate", () => {
     expect(results[0].error).toBeUndefined();
   }, 240_000);
 
+  // Negative control for issue #60: the gate has to catch a determinism change, not just pass.
+  test("rejects the committed dotGoalWorkflow history when the bundle diverges", async () => {
+    const recorded = JSON.parse(fs.readFileSync(FIXTURE, "utf8")) as Recorded;
+    const results = await replayDotGoalForBundle(NEGATIVE_BUNDLE, recorded, QUEUE);
+    expect(results).toHaveLength(1);
+    const error = results[0].error;
+    expect(error).toBeDefined();
+    expect(error instanceof DeterminismViolationError || (error as Error)?.name?.includes("Determinism")).toBe(true);
+  }, 240_000);
+
   test("memoryMutationWorkflow replays its own recorded history", async () => {
     const activities = {
       async executePersistedMemoryChangeSet(input: { changeSetId: string }) {
@@ -96,11 +110,11 @@ describe("replay gate", () => {
   }, 240_000);
 });
 
-async function replayDotGoalForBundle(bundle: string, recorded: Recorded) {
+async function replayDotGoalForBundle(bundle: string, recorded: Recorded, taskQueue = QUEUE + "-mut") {
   const history = temporal.api.history.v1.History.decode(Buffer.from(recorded.historyBase64, "base64"));
   const results: Array<{ error?: unknown }> = [];
   for await (const r of Worker.runReplayHistories(
-    { connection: env.nativeConnection, taskQueue: QUEUE + "-mut", workflowsPath: bundle },
+    { connection: env.nativeConnection, taskQueue, workflowsPath: bundle },
     [{ workflowId: recorded.workflowId, history }],
   )) {
     results.push({ error: r.error });
