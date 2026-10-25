@@ -106,6 +106,26 @@ Keep changes reviewable and include the exact commands and limitations of your
 verification. Never include credentials, private transcripts or local runtime
 state in a contribution.
 
+## Workflow history fixtures
+
+The replay determinism gate in `apps/worker/tests/replay-gate.test.ts` replays
+recorded Temporal histories from
+`apps/worker/tests/fixtures/workflow-histories/`. The test only records when a
+fixture is missing (`existsSync` guard), so re-recording means deleting the file
+first:
+
+```sh
+rm apps/worker/tests/fixtures/workflow-histories/dot-goal.json
+npm test -w @spaceapp/worker
+```
+
+The suite records the missing history and then replays it; a green run proves
+the fresh history is replay-safe. Inspect the generated JSON, commit it together
+with the workflow change that required it, and never commit a history recorded
+with mocked activities. See
+`apps/worker/tests/fixtures/workflow-histories/README.md` for the full
+procedure, including adding a fixture for a new workflow.
+
 ## License of contributions
 
 SpaceApp is licensed under the [MIT License](LICENSE). Contributions are
